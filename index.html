@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Route and Table API Info from CSV</title>
+
+    <!-- Leaflet CSS for Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map {
+            height: 600px;
+            width: 100%;
+            border: 2px solid black; /* Add a black border around the map */
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.1); /* Optional: Add a subtle shadow */
+            /*display: none; /* Initially hidden */
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+        }
+        
+        thead {
+            background-color: #f2f2f2;
+            color: green;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            display: table; /* Ensure header is treated as a table for alignment */
+            width: calc(100% - 17px); /* Subtract scrollbar width */
+        }
+        
+        tbody {
+            display: block; /* Allow scrolling */
+            height: 300px; /* Fixed height for scrolling */
+            overflow-y: auto; /* Enable vertical scrolling */
+            overflow-x: hidden; /* Disable horizontal scrolling */
+        }
+        
+        tbody tr {
+            display: table; /* Keep rows as tables for proper width */
+            width: 100%; /* Ensure tbody rows take the full width */
+            table-layout: fixed; /* Fix layout for alignment */
+        }
+        
+        table, th, td {
+            border: 1px solid black;
+        }
+        
+        th, td {
+            padding: 10px;
+            text-align: left;
+            white-space: nowrap; /* Prevent text wrapping */
+            overflow: hidden; /* Ensure content does not overflow */
+            text-overflow: ellipsis; /* Add ellipsis for overflow */
+        }
+        
+        /* Set width for columns; they will be equally spaced */
+        th, td {
+            width: 20%; /* 100% / 5 columns */
+        }
+        
+        
+        /* Truncate the geometry column */
+        td.geometry {
+            max-width: 250px; /* Adjust this value based on your desired column width */
+        }
+
+        tr:hover {
+            background-color: #808ddd8b;
+            cursor: pointer;
+        }
+
+        .full-geometry {
+            display: none;
+            position: absolute;
+            background-color: white;
+            border: 1px solid black;
+            padding: 5px;
+            max-width: 300px;
+            white-space: normal;
+            z-index: 1000;
+        }
+        /* Limit the table height to show max 10 rows and enable scrolling */
+        .table-container {
+            max-height: 400px; /* Approx height for 10 rows (adjust if needed) */
+            overflow-y: auto;
+        }
+        .selected-row {
+            background-color: #d3d3d3; /* Light gray or any color you prefer */
+        }
+    </style>
+</head>
+<body>
+    <h1>Upload CSV with Coordinates</h1>
+    <h2>(Disclaimer: It will treat the first line as header)</h2>
+
+    <!-- First section: For Route API -->
+    <h2>Route API</h2>
+    <p>(Inputfile columns format: start_id | destination_id | st_x | st_y | st_x-2 | st_y-2 )</p>
+    <input type="file" id="fileInputRoute" accept=".csv">
+    <button id="processButtonRoute">Process CSV for Route API</button>
+    <p id="statusRoute"></p>
+    <a id="downloadLinkRoute" style="display:none;">Download Route API Results</a>
+    <br><br>
+
+    <!-- Table with scrollable container -->
+    <h3>Table for Route Data</h3>
+    <div class="table-container">
+        <table id="routeTable" style="display:none;">
+            <thead>
+                <tr>
+                    <th>Start ID</th>
+                    <th>Destination ID</th>
+                    <th>Duration</th>
+                    <th>Distance</th>
+                    <th>Geometry</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    
+    <h2>Map Visualization for Route API</h2>
+
+    <!-- Map Container (Hidden initially) -->
+    <div id="map"></div>
+
+    <!-- Second section: For Table API -->
+    <h2>Table API</h2>
+    <p>(Inputfile columns format: Id | st_x | st_y )</p>
+    <input type="file" id="fileInputTable" accept=".csv">
+    <button id="processButtonTable">Process CSV for Table API</button>
+    <p id="statusTable"></p>
+    <br><br>
+    <a id="downloadLinkTable" style="display:none;">Download Table API Results</a>
+
+    
+
+    <!-- Leaflet JS for Map -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <script>
+        let routesData = []; // To hold the data for display and interactivity
+
+        // Initialize the map (hidden initially)
+        const map = L.map('map').setView([51.505, -0.09], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        //map.getContainer().style.display = 'none';
+        
+        // Adding legend on the map
+        const legend = L.control({ position: 'bottomright' }); // Adjust position as needed
+
+        legend.onAdd = function (map) {
+            const div = L.DomUtil.create('div', 'info legend');
+            
+            // Add legend content
+            div.innerHTML = `
+                <h4>Legend</h4>
+                <i style="background: #FFFF00; width: 12px; height: 12px; display: inline-block;"></i> Start Point<br>
+                <i style="background: #000000; width: 12px; height: 12px; display: inline-block;"></i> End Point<br>
+                <i style="background: blue; width: 12px; height: 12px; display: inline-block;"></i> Route Line
+            `;
+            
+            return div;
+        };
+
+        // Add the legend to the map
+        legend.addTo(map);
+
+        // Function to convert LINESTRING to array of LatLng points for Leaflet
+        function lineStringToLatLng(lineString) {
+            return lineString.slice(11, -1).split(',').map(pair => {
+                const [lat, lon] = pair.trim().split(' ');
+                return [parseFloat(lat), parseFloat(lon)]; // Convert to [lat, lon]
+            });
+        }
+
+        // Function to add data to the table
+        function addDataToTable(data) {
+            const tbody = document.querySelector('#routeTable tbody');
+            tbody.innerHTML = ''; // Clear any existing rows
+
+            data.forEach((item, index) => {
+                const row = document.createElement('tr');
+
+                // Truncate the geometry string to show just the first 30 characters and add ellipsis
+                const shortGeometry = item.geometry.length > 30 ? item.geometry.substring(0, 30) + '...' : item.geometry;
+
+                row.innerHTML = `
+                    <td>${item.id}</td>
+                    <td>${item.destId}</td>
+                    <td>${item.duration}</td>
+                    <td>${item.distance}</td>
+                    <td class="geometry" title="${item.geometry}" data-full-geometry="${item.geometry}">${shortGeometry}</td>
+                `;
+
+                // Add click event listener to each row
+                row.addEventListener('click', () => {
+                     // Remove the highlight from all rows
+                    document.querySelectorAll('#routeTable tr').forEach(r => r.classList.remove('selected-row'));
+
+                    // Highlight the clicked row
+                    row.classList.add('selected-row');
+
+                    // Show the map and plot the route when clicked
+                    map.getContainer().style.display = 'block';
+
+                    // Hide previous layers
+                    map.eachLayer(function(layer) {
+                        if (!!layer.toGeoJSON) {
+                            map.removeLayer(layer);
+                        }
+                    });
+
+                    const latLngs = lineStringToLatLng(item.geometry);
+                    const polyline = L.polyline(latLngs, { color: 'blue' }).addTo(map);
+                    map.fitBounds(polyline.getBounds()); // Adjust the view to fit the polyline
+
+                    // Add a circle marker for the first point (start)
+                    const startPoint = latLngs[0];
+                    L.circleMarker(startPoint, {
+                        color: '#FFFF00',  // Color for the start point
+                        radius: 4        // Size of the marker
+                    }).addTo(map).bindPopup('Start Point');
+
+                    // Add a circle marker for the last point (end)
+                    const endPoint = latLngs[latLngs.length - 1];
+                    L.circleMarker(endPoint, {
+                        color: '#000000',    // Color for the end point
+                        radius: 4        // Size of the marker
+                    }).addTo(map).bindPopup('End Point');
+
+                });
+
+                tbody.appendChild(row);
+            });
+
+            // Show the table
+            document.getElementById('routeTable').style.display = 'table';
+        }
+
+        // Function to handle hover to show full geometry string
+        document.addEventListener('mouseover', function (e) {
+            if (e.target && e.target.classList.contains('geometry')) {
+                const fullGeometry = e.target.getAttribute('data-full-geometry');
+                const fullGeometryDiv = document.createElement('div');
+                fullGeometryDiv.classList.add('full-geometry');
+                fullGeometryDiv.textContent = fullGeometry;
+                document.body.appendChild(fullGeometryDiv);
+
+                fullGeometryDiv.style.left = e.pageX + 'px';
+                fullGeometryDiv.style.top = e.pageY + 'px';
+
+                e.target.addEventListener('mouseleave', () => {
+                    fullGeometryDiv.remove();
+                });
+            }
+        });
+
+        // Function to fetch Route Data from Route API
+        async function fetchRouteData(start, end) {
+            const apiUrl = `http://132.195.71.40:5000/route/v1/driving/${start};${end}?overview=full`;
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            const data = await response.json();
+            return {
+                duration: data.routes[0].duration,
+                distance: data.routes[0].distance,
+                geometry: data.routes[0].geometry // Encoded polyline
+            };
+        }
+
+        // Function to process the CSV for Route API
+        async function processCSVFileRoute(file) {
+            try {
+                const csvText = await readCSVFile(file);
+                const coordinates = parseCSVForRouteAPI(csvText);
+                const batchSize = 1000;
+                routesData = await processInBatchesRoute(coordinates, batchSize);
+
+                addDataToTable(routesData); // Add the results to the table
+
+                createDownloadableCSVRoute(routesData, 'route_results.csv'); // Enable CSV download
+            } catch (error) {
+                console.error('Error processing Route API CSV file:', error);
+            }
+        }
+
+        // Function to process the Route API in batches
+        async function processInBatchesRoute(coordinates, batchSize) {
+            const results = [];
+            for (let i = 0; i < coordinates.length; i += batchSize) {
+                const batch = coordinates.slice(i, i + batchSize);
+
+                const batchPromises = batch.map(async (coord) => {
+                    try {
+                        const route = await fetchRouteData(coord.start, coord.end);
+                        return {
+                            id: coord.id,
+                            destId: coord.destId,
+                            duration: route.duration, // duration in seconds
+                            distance: route.distance,  // distance in meters
+                            geometry: `LINESTRING(${polylineToString(route.geometry)})` // Store LINESTRING
+                        };
+                    } catch (error) {
+                        console.error(`Error fetching data for ID ${coord.id}:`, error);
+                        return {
+                            id: coord.id,
+                            destId: coord.destId,
+                            duration: 'Error',
+                            distance: 'Error',
+                            geometry: 'Error'
+                        };
+                    }
+                });
+
+                const batchResults = await Promise.all(batchPromises);
+                results.push(...batchResults);
+                document.getElementById('statusRoute').textContent = `Processed ${i + batchSize}/${coordinates.length}`;
+            }
+            return results;
+        }
+
+        // Function to decode polyline and return points as lat/lon string
+        function polylineToString(encodedPolyline) {
+            const decodedPoints = decodePolyline(encodedPolyline);
+            return decodedPoints.map(point => `${point[0]} ${point[1]}`).join(', ');
+        }
+
+        // Function to decode the polyline (Google Maps standard)
+        function decodePolyline(encoded) {
+            let points = [];
+            let index = 0, len = encoded.length;
+            let lat = 0, lng = 0;
+
+            while (index < len) {
+                let b, shift = 0, result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                let dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lat += dlat;
+
+                shift = 0;
+                result = 0;
+                do {
+                    b = encoded.charCodeAt(index++) - 63;
+                    result |= (b & 0x1f) << shift;
+                    shift += 5;
+                } while (b >= 0x20);
+                let dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+                lng += dlng;
+
+                points.push([lat / 1e5, lng / 1e5]); // Convert back to lat/lng
+            }
+            return points;
+        }
+
+        // Function to read CSV file (generic for any API)
+        function readCSVFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    resolve(e.target.result);
+                };
+                reader.onerror = reject;
+                reader.readAsText(file);
+            });
+        }
+
+        // Function to parse CSV for Route API
+        function parseCSVForRouteAPI(csvText) {
+            const rows = csvText.trim().split('\n').slice(1); // Skip the header row
+            const coordinates = rows.map(row => {
+                const [id, destId, startLon, startLat, endLon, endLat] = row.split(',');
+                return { id, destId, start: `${startLon},${startLat}`, end: `${endLon},${endLat}` };
+            });
+            return coordinates;
+        }
+
+        // Create a downloadable CSV
+        function createDownloadableCSVRoute(data, filename) {
+            const csvContent = 'data:text/csv;charset=utf-8,'
+                + 'Start ID,Destination ID,Duration (s),Distance (m),Geometry\n'
+                + data.map(row => `${row.id},${row.destId},${row.duration},${row.distance},${row.geometry}`).join('\n');
+
+            const encodedUri = encodeURI(csvContent);
+            const downloadLink = document.getElementById('downloadLinkRoute');
+            downloadLink.setAttribute('href', encodedUri);
+            downloadLink.setAttribute('download', filename);
+            downloadLink.style.display = 'block';
+        }
+
+        // Event listener for the Route API
+        document.getElementById('processButtonRoute').addEventListener('click', () => {
+            const fileInput = document.getElementById('fileInputRoute');
+            if (fileInput.files.length === 0) {
+                alert('Please upload a CSV file for Route API.');
+                return;
+            }
+            processCSVFileRoute(fileInput.files[0]);
+        })
+        
+        //<!-- second section: For Table API -->
+
+        async function fetchTableData(coordinateString) {
+            const apiUrl = `http://132.195.71.40:5000/table/v1/driving/${coordinateString}?annotations=duration,distance`;
+            const response = await fetch(apiUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            const data = await response.json();
+            return data;  // Return the entire response object
+        }
+
+        // Function to parse CSV for Table API (ignores the first column 'id')
+        function parseCSVForTableAPI(csvText) {
+            const rows = csvText.trim().split('\n').slice(1); // Skip the first line (header)
+
+            // Construct a string of coordinates (latitude, longitude) separated by semicolons
+            const coordinates = rows.map(row => {
+                const [, latitude, longitude] = row.split(','); // Ignore the first column (ID)
+                return `${latitude},${longitude}`;  // Returns a single string with lat and lon
+            }).join(';');  // Joins all coordinates with semicolons
+            return coordinates;
+        }
+
+        // Function to create and download CSV file (for Table API)
+        function createDownloadableCSVTable(data, filename) {
+            const combinedRows = [];
+
+            // Assuming data.matrix contains the matrix of distances and durations
+            for (let i = 0; i < data.durations.length; i++) {
+                for (let j = 0; j < data.durations[i].length; j++) {
+                    combinedRows.push(`${i + 1},${j + 1},${data.distances[i][j]},${data.durations[i][j]}`);
+                }
+            }
+
+            // Combine both distance and duration in a single CSV file
+            const csvContent = "start_id,destination_id,distance,duration\n" + combinedRows.join("\n");
+
+            // Create a downloadable CSV file
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+
+            // Update the download link
+            const downloadLink = document.getElementById('downloadLinkTable');
+            downloadLink.href = url;
+            downloadLink.download = filename;
+            downloadLink.style.display = 'block'; // Show the download link
+        }
+
+
+        // Main function to process CSV for Table API
+        async function processCSVFileTable(file) {
+            try {
+                const csvText = await readCSVFile(file);
+                const coordinateString = parseCSVForTableAPI(csvText);
+
+                // Fetch table data from API
+                const tableData = await fetchTableData(coordinateString);
+
+                // Create downloadable CSV
+                createDownloadableCSVTable(tableData, 'table_results.csv');
+            } catch (error) {
+                console.error('Error processing Table API CSV file:', error);
+            }
+        }
+
+        // Event listener for Table API
+        document.getElementById('processButtonTable').addEventListener('click', () => {
+            const fileInput = document.getElementById('fileInputTable');
+            if (fileInput.files.length === 0) {
+                alert('Please upload a CSV file for Table API.');
+                return;
+            }
+            processCSVFileTable(fileInput.files[0]);
+        });
+    </script>
+</body>
+</html>
