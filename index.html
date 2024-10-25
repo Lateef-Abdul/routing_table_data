@@ -264,7 +264,7 @@
 
         // Function to fetch Route Data from Route API
         async function fetchRouteData(start, end) {
-            const apiUrl = `http://132.195.71.40:5000/route/v1/driving/${start};${end}?overview=full`;
+            const apiUrl = `https://132.195.71.40:5000/route/v1/driving/${start};${end}?overview=full`;
             const response = await fetch(apiUrl);
             if (!response.ok) {
                 throw new Error(`HTTP error! Status: ${response.status}`);
@@ -413,7 +413,7 @@
         //<!-- second section: For Table API -->
 
         async function fetchTableData(coordinateString) {
-            const apiUrl = `http://132.195.71.40:5000/table/v1/driving/${coordinateString}?annotations=duration,distance`;
+            const apiUrl = `https://132.195.71.40:5000/table/v1/driving/${coordinateString}?annotations=duration,distance`;
             const response = await fetch(apiUrl);
             if (!response.ok) {
                 throw new Error(`HTTP error! Status: ${response.status}`);
