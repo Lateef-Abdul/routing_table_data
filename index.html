@@ -264,7 +264,7 @@
 
         // Function to fetch Route Data from Route API
         async function fetchRouteData(start, end) {
-            const apiUrl = `https://132.195.71.40:5000/route/v1/driving/${start};${end}?overview=full`;
+            const apiUrl = `https://router.project-osrm.org/route/v1/driving/${start};${end}?overview=full`;
             const response = await fetch(apiUrl);
             if (!response.ok) {
                 throw new Error(`HTTP error! Status: ${response.status}`);
